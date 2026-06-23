@@ -1,0 +1,15 @@
+*.sdf
+*.smi
+*.csv
+*.zip
+*.pdbqt
+intermediate_*
+enamine_outputs/
+enamine_chunks/
+*.log
+*.out
+__pycache__/
+*.pyc
+CLAUDE.local.md
+CLAUDE.md
+.env

@@ -738,10 +738,10 @@ def main():
                         help="Max unspecified stereocentres (default: 2)")
     parser.add_argument("--max-tautomers", type=int, default=5,
                         help="Max tautomers per molecule (default: 5)")
-    parser.add_argument("--min-ph", type=float, default=6.4,
-                        help="Min pH for ionisation (default: 6.4)")
-    parser.add_argument("--max-ph", type=float, default=8.4,
-                        help="Max pH for ionisation (default: 8.4)")
+    parser.add_argument("--min-ph", type=float, default=7.4,
+                        help="Min pH for ionisation (default: 7.4)")
+    parser.add_argument("--max-ph", type=float, default=7.4,
+                        help="Max pH for ionisation (default: 7.4)")
     parser.add_argument("--n-workers", type=int, default=32,
                         help="Parallel workers (default: 32)")
     parser.add_argument("--skip-tautomers", action="store_true",

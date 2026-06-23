@@ -1,72 +1,46 @@
 set -uo pipefail
 
-WORK="$HOME"                       
+WORK="$HOME"
 CHUNK_DIR="$HOME/enamine_chunks"
 SCRIPTS=(library_pipeline.py run_conformers_chunked.py sdf2smi.py)
 mkdir -p "$CHUNK_DIR"
-
 cd "$WORK"
-source "$HOME/miniconda3/etc/profile.d/conda.sh"
-conda activate chem
+source "$HOME/miniconda3/etc/profile.d/conda.sh"; conda activate chem
 
 declare -A SERVER_CHUNK=(
   ["leviathan.bch.ed.ac.uk"]="chunk_02"
   ["executor.bch.ed.ac.uk"]="chunk_03"
   ["behemoth.bch.ed.ac.uk"]="chunk_04"
   ["atlas.bch.ed.ac.uk"]="chunk_05"
-  ["colossus.bch.ed.ac.uk"]="chunk_06"
-  ["cerberus.bch.ed.ac.uk"]="chunk_07"
+  ["cerberus.bch.ed.ac.uk"]="chunk_06"
 )
 
-
-for NAME in premium advanced legacy; do
-  if [ -f "${NAME}.smi" ]; then
-    echo "[convert] ${NAME}.smi already present, skipping"
-    continue
-  fi
+# 1. Convert each supplier collection to SMILES (edit this list for your inputs)
+for NAME in functional hts premium advanced legacy; do
+  if [ -f "${NAME}.smi" ]; then echo "[convert] ${NAME}.smi present, skipping"; continue; fi
   ZIP=$(ls Enamine_${NAME}_collection_sdf_*.zip 2>/dev/null | head -1)
   [ -n "$ZIP" ] && unzip -o "$ZIP"
   SDF=$(ls Enamine_${NAME}_collection_*.sdf 2>/dev/null | head -1)
-  if [ -z "$SDF" ]; then echo "[FATAL] no SDF found for $NAME"; exit 1; fi
-  echo "[convert] $SDF -> ${NAME}.smi"
-  python sdf2smi.py "$SDF" "${NAME}.smi"
+  [ -z "$SDF" ] && { echo "[FATAL] no SDF found for $NAME"; exit 1; }
+  echo "[convert] $SDF -> ${NAME}.smi"; python sdf2smi.py "$SDF" "${NAME}.smi"
 done
 
-
-for f in functional hts premium advanced legacy; do
-  [ -f "${f}.smi" ] || { echo "[FATAL] missing ${f}.smi"; exit 1; }
-done
-echo "[combine] building all_screening.smi"
+# 2. Combine all collections
 cat functional.smi hts.smi premium.smi advanced.smi legacy.smi > all_screening.smi
-N=$(wc -l < all_screening.smi)
-echo "[combine] total molecules: $N"
+N=$(wc -l < all_screening.smi); echo "[combine] total molecules: $N"
 
-
-PER=$(awk "BEGIN{printf \"%d\", $N/6.55}")
-echo "[split] $PER lines per 5090 chunk; remainder (~0.55x) -> Cerberus chunk_07"
-awk -v n="$PER" -v d="$CHUNK_DIR" '
-  NR <= 6*n { f=sprintf("%s/chunk_%02d.smi", d, int((NR-1)/n)+1); print > f; next }
-  { print > (d "/chunk_07.smi") }
-' all_screening.smi
+# 3. Even 6-way split 
+PER=$(( (N + 5) / 6 ))
+awk -v n="$PER" -v d="$CHUNK_DIR" \
+  '{ f=sprintf("%s/chunk_%02d.smi", d, int((NR-1)/n)+1); print > f }' all_screening.smi
 wc -l "$CHUNK_DIR"/chunk_*.smi
 
-
+# 4. Distribute scripts + chunk to each remote 
 for SERVER in "${!SERVER_CHUNK[@]}"; do
   CHUNK="${SERVER_CHUNK[$SERVER]}"
   echo "[scp] $SERVER <- ${SCRIPTS[*]} + ${CHUNK}.smi"
   scp -o StrictHostKeyChecking=accept-new "${SCRIPTS[@]}" "$SERVER:~/" || { echo "[FATAL] scp scripts -> $SERVER"; exit 2; }
-  scp "$CHUNK_DIR/${CHUNK}.smi" "$SERVER:~/${CHUNK}.smi"               || { echo "[FATAL] scp chunk -> $SERVER";   exit 2; }
+  scp "$CHUNK_DIR/${CHUNK}.smi" "$SERVER:~/${CHUNK}.smi"               || { echo "[FATAL] scp chunk -> $SERVER"; exit 2; }
   ssh "$SERVER" "mkdir -p ~/enamine_outputs"
 done
-echo "[local] chunk_01 stays in $CHUNK_DIR for Apollo"
-
-
-echo "[preflight] env check (rdkit | nvmolkit | dimorphite versions)"
-python -c "import rdkit,nvmolkit,dimorphite_dl as d; print('apollo', rdkit.__version__, getattr(d,'__version__','?'))" \
-  || echo "[WARN] apollo env check failed"
-for SERVER in "${!SERVER_CHUNK[@]}"; do
-  ssh "$SERVER" 'source ~/miniconda3/etc/profile.d/conda.sh; conda activate chem; \
-    python -c "import rdkit,nvmolkit,dimorphite_dl as d; print(\"'"$SERVER"'\", rdkit.__version__, getattr(d,\"__version__\",\"?\"))"' \
-    || echo "[WARN] env check failed on $SERVER (nvmolkit import on Colossus may need its CUDA workaround)"
-done
-echo "[done] stage 0 complete — run 01_run_distributed.sh next"
+echo "[done] stage 0 complete. Next: ./01_run_distributed.sh"

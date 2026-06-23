@@ -1,10 +1,6 @@
-#!/usr/bin/env bash
-# Stage 0: convert the remaining collections to SMILES, combine all five,
-# weighted-split into 7 chunks, and distribute the PATCHED pipeline + chunks
-# to every node. Run on Apollo AFTER the dimorphite patch is applied locally.
 set -uo pipefail
 
-WORK="$HOME"                       # where the zips / sdfs / *.smi live
+WORK="$HOME"                       
 CHUNK_DIR="$HOME/enamine_chunks"
 SCRIPTS=(library_pipeline.py run_conformers_chunked.py sdf2smi.py)
 mkdir -p "$CHUNK_DIR"
@@ -13,8 +9,6 @@ cd "$WORK"
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate chem
 
-# host -> input chunk (chunk_01 stays local for Apollo). Cerberus (4090) gets the
-# smaller chunk_07; the six 5090s (Apollo + 5 remotes) get equal chunks 01-06.
 declare -A SERVER_CHUNK=(
   ["leviathan.bch.ed.ac.uk"]="chunk_02"
   ["executor.bch.ed.ac.uk"]="chunk_03"
@@ -24,8 +18,7 @@ declare -A SERVER_CHUNK=(
   ["cerberus.bch.ed.ac.uk"]="chunk_07"
 )
 
-# ── 1. Convert the three not-yet-converted collections ───────────────────────
-#     (functional.smi and hts.smi already exist from your pilots)
+
 for NAME in premium advanced legacy; do
   if [ -f "${NAME}.smi" ]; then
     echo "[convert] ${NAME}.smi already present, skipping"
@@ -39,9 +32,7 @@ for NAME in premium advanced legacy; do
   python sdf2smi.py "$SDF" "${NAME}.smi"
 done
 
-# ── 2. Concatenate all five collections ──────────────────────────────────────
-#     Plain cat is correct for SMILES *inputs*. (The byte-stream-not-canonical
-#     rule applies only to merging multi-record SDF *outputs*, in stage 2.)
+
 for f in functional hts premium advanced legacy; do
   [ -f "${f}.smi" ] || { echo "[FATAL] missing ${f}.smi"; exit 1; }
 done
@@ -50,8 +41,7 @@ cat functional.smi hts.smi premium.smi advanced.smi legacy.smi > all_screening.s
 N=$(wc -l < all_screening.smi)
 echo "[combine] total molecules: $N"
 
-# ── 3. Weighted split: 6 equal 5090 chunks + 1 smaller Cerberus chunk ────────
-#     5090:4090 throughput ~ 1 : 0.55  ->  6*1 + 0.55 = 6.55 weight units.
+
 PER=$(awk "BEGIN{printf \"%d\", $N/6.55}")
 echo "[split] $PER lines per 5090 chunk; remainder (~0.55x) -> Cerberus chunk_07"
 awk -v n="$PER" -v d="$CHUNK_DIR" '
@@ -60,7 +50,7 @@ awk -v n="$PER" -v d="$CHUNK_DIR" '
 ' all_screening.smi
 wc -l "$CHUNK_DIR"/chunk_*.smi
 
-# ── 4. Distribute patched scripts + each node's chunk ────────────────────────
+
 for SERVER in "${!SERVER_CHUNK[@]}"; do
   CHUNK="${SERVER_CHUNK[$SERVER]}"
   echo "[scp] $SERVER <- ${SCRIPTS[*]} + ${CHUNK}.smi"
@@ -70,9 +60,7 @@ for SERVER in "${!SERVER_CHUNK[@]}"; do
 done
 echo "[local] chunk_01 stays in $CHUNK_DIR for Apollo"
 
-# ── 5. Preflight: confirm the chem env is sane on every node ──────────────────
-#     Catches version drift / missing deps BEFORE the long run. The patched
-#     pipeline handles dimorphite 1.x and 2.x, but not its absence.
+
 echo "[preflight] env check (rdkit | nvmolkit | dimorphite versions)"
 python -c "import rdkit,nvmolkit,dimorphite_dl as d; print('apollo', rdkit.__version__, getattr(d,'__version__','?'))" \
   || echo "[WARN] apollo env check failed"
